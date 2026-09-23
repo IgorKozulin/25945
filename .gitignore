@@ -1,0 +1,11 @@
+# SSH keys — never commit
+gitnsu
+gitnsu.pub
+ESnsu
+ESnsu.pub
+Solaris
+Solaris.pub
+id_rsa
+id_rsa.pub
+*.pem
+.env
