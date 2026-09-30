@@ -1,85 +1,85 @@
 #include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <ulimit.h>
-#include <sys/resource.h>
-#include <string.h>
+#include <stdlib.h>        // strtol, putenv
+#include <unistd.h>        // getopt, getpid, getuid, getcwd
+#include <ulimit.h>        // ulimit
+#include <sys/resource.h>  // getrlimit, setrlimit (для core)
+#include <string.h>        // strchr
 
-#define MAXOPTS 100
+#define MAXOPTS 100  // больше 100 опций не влезет в массивы
 
-extern char **environ;
+extern char **environ;  // все переменные среды, в конце NULL
 
-/* Выполняет одну опцию c со значением arg */
+// выполняет одну опцию, c - буква, arg - значение (если есть)
 void do_option(int c, char *arg)
 {
-    char buf[1024];
+    char buf[1024];     // сюда getcwd кладет путь
     long newlim;
-    char *end;
-    struct rlimit rl;
+    char *end;          // где strtol остановилась
+    struct rlimit rl;   // rlim_cur - текущий, rlim_max - потолок
     char **env;
 
     switch (c) {
-    case 'i':
+    case 'i':  // -i: реальные и эффективные uid, gid
         printf("uid=%d euid=%d gid=%d egid=%d\n",
                (int)getuid(), (int)geteuid(),
                (int)getgid(), (int)getegid());
         break;
-    case 's':
+    case 's':  // -s: стать лидером группы (pgid = pid)
         if (setpgid(0, 0) == -1)
             perror("setpgid");
         else
             printf("процесс стал лидером группы\n");
         break;
-    case 'p':
+    case 'p':  // -p: pid, pid родителя, группа
         printf("pid=%d ppid=%d pgid=%d\n",
                (int)getpid(), (int)getppid(), (int)getpgrp());
         break;
-    case 'u':
+    case 'u':  // -u: печать ulimit (в блоках по 512 байт)
         printf("ulimit=%ld\n", ulimit(UL_GETFSIZE));
         break;
-    case 'U':
+    case 'U':  // -U: поменять ulimit, поднять может только root
         newlim = strtol(arg, &end, 10);
-        if (*end != '\0' || newlim < 0) {
+        if (*end != '\0' || newlim < 0) {  // в строке мусор или минус
             printf("плохое значение для -U: %s\n", arg);
             break;
         }
         if (ulimit(UL_SETFSIZE, newlim) == -1)
             perror("ulimit");
         break;
-    case 'c':
+    case 'c':  // -c: размер core-файла
         if (getrlimit(RLIMIT_CORE, &rl) == -1)
             perror("getrlimit");
-        else if (rl.rlim_cur == RLIM_INFINITY)
+        else if (rl.rlim_cur == RLIM_INFINITY)  // на солярисе это -3
             printf("core limit=unlimited\n");
         else
             printf("core limit=%ld\n", (long)rl.rlim_cur);
         break;
-    case 'C':
+    case 'C':  // -C: поменять размер core
         newlim = strtol(arg, &end, 10);
         if (*end != '\0' || newlim < 0) {
             printf("плохое значение для -C: %s\n", arg);
             break;
         }
-        if (getrlimit(RLIMIT_CORE, &rl) == -1) {
+        if (getrlimit(RLIMIT_CORE, &rl) == -1) {  // сначала читаем, чтоб rlim_max не потерять
             perror("getrlimit");
             break;
         }
-        rl.rlim_cur = newlim;
+        rl.rlim_cur = newlim;  // меняем только текущий
         if (setrlimit(RLIMIT_CORE, &rl) == -1)
             perror("setrlimit");
         break;
-    case 'd':
+    case 'd':  // -d: текущая папка
         if (getcwd(buf, sizeof(buf)) != NULL)
             printf("cwd=%s\n", buf);
         else
             perror("getcwd");
         break;
-    case 'v':
+    case 'v':  // -v: все переменные среды, идем до NULL
         for (env = environ; *env != NULL; env++)
             printf("%s\n", *env);
         break;
-    case 'V':
-        if (strchr(arg, '=') == NULL) {
+    case 'V':  // -V: добавить/поменять переменную, формат имя=значение
+        if (strchr(arg, '=') == NULL) {  // нет '=' значит неправильно
             printf("плохое значение для -V: %s (нужно имя=значение)\n", arg);
             break;
         }
@@ -92,32 +92,33 @@ void do_option(int c, char *arg)
 int main(int argc, char *argv[])
 {
     int c;
-    int n = 0;
+    int n = 0;               // сколько опций записали
     int i;
-    int opts[MAXOPTS];
-    char *args[MAXOPTS];
+    int opts[MAXOPTS];       // буквы опций
+    char *args[MAXOPTS];     // их значения, у -i -p и тд тут NULL
 
-    if (argc == 1) {
+    if (argc == 1) {  // запустили без аргументов
         printf("Использование: %s [-i] [-s] [-p] [-u] [-Uзначение] [-c] [-Cзначение] [-d] [-v] [-Vимя=значение]\n", argv[0]);
         return 0;
     }
 
-    /* Проход 1: собираем опции слева направо */
+    // сначала собираем все опции (getopt идет только слева направо)
+    // двоеточие после буквы = у опции есть значение
     while ((c = getopt(argc, argv, "ispuU:cC:dvV:")) != -1) {
-        if (c == '?') {
+        if (c == '?') {  // буквы нет в списке
             printf("неизвестная опция\n");
             continue;
         }
-        if (n >= MAXOPTS) {
+        if (n >= MAXOPTS) {  // чтоб не вылезти за массив
             printf("слишком много опций\n");
             return 1;
         }
         opts[n] = c;
-        args[n] = optarg;
+        args[n] = optarg;  // сохраняем сразу, getopt его перезапишет
         n++;
     }
 
-    /* Проход 2: выполняем справа налево */
+    // потом выполняем с конца, по заданию справа налево
     for (i = n - 1; i >= 0; i--) {
         do_option(opts[i], args[i]);
     }
