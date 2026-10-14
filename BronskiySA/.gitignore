@@ -1,0 +1,10 @@
+/t1/options
+/t2/ex_time
+/t3/setuid_test
+/t4/list_strings
+/t5/line_lookup
+/t6/line_lookup_alarm
+/t7/line_lookup_mmap
+/t8/locked_editor
+/t9/process_manager
+__pycache__/
