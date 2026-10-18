@@ -61,12 +61,10 @@ int main(int argc, char *argv[])
     while (read(g_fd, &ch, 1) == 1) {
 
         if (ch == '\n') {
-            // Зафиксировали конец строки
             table[line_count].length = current_len;
             line_count++;
             current_len = 0;
 
-            // Если массив заполнен, увеличиваем его емкость в 2 раза через realloc
             if (line_count >= capacity) {
                 capacity *= 2;
                 LineInfo *temp = realloc(table, capacity * sizeof(LineInfo));
@@ -142,10 +140,8 @@ int main(int argc, char *argv[])
         // lseek(g_fd, смещение, SEEK_SET) — прыгаем прямо на начало запрошенной строки
         lseek(g_fd, table[idx].offset, SEEK_SET);
 
-        // Считываем ровно столько байт, сколько длится эта строка
         read(g_fd, line_buf, table[idx].length);
 
-        // read() не ставит '\0', поэтому добавляем его вручную в конец
         line_buf[table[idx].length] = '\0';
 
         // Выводим полученную строку
