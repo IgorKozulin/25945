@@ -7,7 +7,7 @@ int main(void)
     time_t now;
     struct tm *sp;
 
-    setenv("TZ", "PST8", 1);
+    setenv("TZ", "Europe/Moscow", 1);
     tzset();
 
     time(&now);
