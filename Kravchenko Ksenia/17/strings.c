@@ -10,6 +10,8 @@
  * - Backspace/DEL (ERASE) - удаление последнего символа
  * - Ctrl-U (KILL) - удаление всей текущей строки
  * - Ctrl-W (WERASE) - удаление последнего слова и пробелов за ним
+ * - Ctrl-T - режим правки строки: стрелки влево/вправо, Home/End, Delete;
+ *            Enter - применить, ESC - отменить (правка в любом месте)
  * - Ctrl-D (EOF) - выход, если курсор в начале строки
  * - ограничение 40 символов на строку с переносом слов
  * - игнорирование ESC-последовательностей (стрелки, F-клавиши)
@@ -21,7 +23,31 @@
                            ICANON, ECHO, VERASE, VKILL, TCSANOW   */
 #include <unistd.h>     /* read, STDIN_FILENO                     */
 #include <ctype.h>      /* isprint                                */
-#include <string.h>     /* memcpy                                 */
+#include <string.h>     /* memcpy, memmove                        */
+#include <sys/select.h> /* select - таймаут при чтении ESC        */
+#include <sys/time.h>   /* struct timeval                         */
+
+/* Перерисовать текущую строку: \r - в начало строки, ESC[K - стереть
+   остаток строки, затем сама строка и возврат курсора на позицию cur */
+static void redraw_line(const char *s, int len, int cur) {
+    printf("\r\033[K");
+    for (int i = 0; i < len; i++) putchar(s[i]);
+    for (int i = len; i > cur; i--) putchar('\b');
+    fflush(stdout);
+}
+
+/* Есть ли готовый байт на вводе в течение ms миллисекунд.
+   Нужно, чтобы отличить одиночный ESC (отмена) от ESC-последовательности
+   стрелки: после ESC ждём немного и, если байта нет, считаем это ESC. */
+static int key_ready(int ms) {
+    fd_set fds;
+    struct timeval tv;
+    FD_ZERO(&fds);
+    FD_SET(STDIN_FILENO, &fds);
+    tv.tv_sec = ms / 1000;
+    tv.tv_usec = (ms % 1000) * 1000;
+    return select(STDIN_FILENO + 1, &fds, NULL, NULL, &tv) > 0;
+}
 
 int main() {
     /* Сохраняем текущие настройки терминала, чтобы потом восстановить их:
@@ -48,11 +74,13 @@ int main() {
     char eof_char   = '\004';              // Ctrl-D
     char bell_char  = '\007';              // CTRL-G
     char esc_char   = '\033';              // ESC
+    char ctrl_t_char = '\024';             // CTRL-T - режим правки строки
 
     // Приветственное сообщение
     printf("String editor started. Use Backspace or DEL for erase char (VERASE), "
            "Ctrl-U for kill line (VKILL), Ctrl-W for kill word, "
            "Ctrl-D at empty to exit.\n"
+           "Ctrl-T - edit the line: arrows, Home/End, Delete; Enter apply, ESC cancel.\n"
            "Non-printable keys beep.\n");
     fflush(stdout);   /* выталкиваем приглашение до начала чтения с клавиатуры */
 
@@ -114,12 +142,7 @@ int main() {
             // Пропускаем слово
             /* Идём назад, пока не упрёмся в пробел или начало строки:
                так находим начало последнего слова */
-            int word_end = pos;
             while (pos > line_start && buffer[pos - 1] != ' ') pos--;
-            int word_start = pos;
-
-            // Пропускаем пробелы перед словом
-            while (pos > line_start && buffer[pos - 1] == ' ') pos--;
 
             // Удаляем от pos до total_len
             /* Стираем на экране всё, что правее pos (слово и пробелы
@@ -129,6 +152,121 @@ int main() {
                 printf("\b \b");
             }
             total_len = pos;
+
+        } else if (c == ctrl_t_char) {
+            /* === Режим правки строки (Ctrl-T) ===
+               Текущая строка копируется в отдельный буфер edit, курсор ecur
+               можно двигать стрелками и править текст в любом месте.
+               Enter - применить изменения, ESC (или Ctrl-D) - отменить. */
+            char edit[64];
+            int elen = line_len;
+            int ecur = line_len;
+
+            memcpy(edit, buffer + line_start, elen);
+            redraw_line(edit, elen, ecur);   /* показать строку и курсор */
+
+            int edit_done = 0;               /* 1 - применить, 2 - отменить */
+            while (!edit_done) {
+                char k;
+                if (read(STDIN_FILENO, &k, 1) != 1) { edit_done = 2; break; }
+
+                if (k == '\r' || k == '\n') {
+                    edit_done = 1;           /* Enter - применить */
+
+                } else if (k == '\004') {
+                    edit_done = 2;           /* Ctrl-D - отмена */
+
+                } else if (k == esc_char) {
+                    /* ESC: либо последовательность стрелки/Home/End/Delete,
+                       либо одиночный ESC - отмена */
+                    if (!key_ready(250)) { edit_done = 2; break; }
+
+                    char a;
+                    if (read(STDIN_FILENO, &a, 1) != 1) { edit_done = 2; break; }
+                    if (a == '[' || a == 'O') {
+                        char b;
+                        if (read(STDIN_FILENO, &b, 1) != 1) { edit_done = 2; break; }
+
+                        if (b == 'D') {                  /* стрелка влево */
+                            if (ecur > 0) ecur--;
+                        } else if (b == 'C') {           /* стрелка вправо */
+                            if (ecur < elen) ecur++;
+                        } else if (b == 'H') {           /* Home */
+                            ecur = 0;
+                        } else if (b == 'F') {           /* End */
+                            ecur = elen;
+                        } else if (b == '1' || b == '4') { /* Home/End: ESC [ 1~ / 4~ */
+                            char t;
+                            if (read(STDIN_FILENO, &t, 1) == 1 && t == '~') {
+                                ecur = (b == '1') ? 0 : elen;
+                            }
+                        } else if (b == '3') {           /* Delete: ESC [ 3 ~ */
+                            char t;
+                            if (read(STDIN_FILENO, &t, 1) == 1 && t == '~' && ecur < elen) {
+                                memmove(edit + ecur, edit + ecur + 1, elen - ecur - 1);
+                                elen--;
+                            }
+                        }
+                        redraw_line(edit, elen, ecur);
+
+                    } else {
+                        /* ESC + неизвестный символ - игнорируем */
+                        redraw_line(edit, elen, ecur);
+                    }
+
+                } else if (k == erase_char) {
+                    /* Backspace: удаляем символ слева от курсора */
+                    if (ecur > 0) {
+                        memmove(edit + ecur - 1, edit + ecur, elen - ecur);
+                        ecur--;
+                        elen--;
+                        redraw_line(edit, elen, ecur);
+                    }
+
+                } else if (k == werase_char) {
+                    /* Ctrl-W: удаляем слово слева от курсора и пробелы за ним */
+                    int p = ecur;
+                    while (p > 0 && edit[p - 1] == ' ') p--;
+                    while (p > 0 && edit[p - 1] != ' ') p--;
+                    if (p < ecur) {
+                        memmove(edit + p, edit + ecur, elen - ecur);
+                        elen -= ecur - p;
+                        ecur = p;
+                        redraw_line(edit, elen, ecur);
+                    }
+
+                } else if (isprint(k)) {
+                    /* Вставка символа в позицию курсора */
+                    if (elen < 40) {
+                        memmove(edit + ecur + 1, edit + ecur, elen - ecur);
+                        edit[ecur] = k;
+                        ecur++;
+                        elen++;
+                        redraw_line(edit, elen, ecur);
+                    } else {
+                        putchar(bell_char);      /* строка уже 40 символов */
+                        fflush(stdout);
+                    }
+
+                } else {
+                    putchar(bell_char);
+                    fflush(stdout);
+                }
+            }
+
+            if (edit_done == 1 &&
+                total_len - line_len + elen < (int)sizeof(buffer)) {
+                /* Применяем: заменяем текущую строку в buffer на edit */
+                memmove(buffer + line_start + elen,
+                        buffer + line_start + line_len,
+                        total_len - line_start - line_len);
+                memcpy(buffer + line_start, edit, elen);
+                total_len = total_len - line_len + elen;
+                redraw_line(buffer + line_start, elen, elen);
+            } else {
+                /* Отмена: возвращаем строку как была */
+                redraw_line(buffer + line_start, line_len, line_len);
+            }
 
         } else if (c == esc_char) {
             // Игнорируем ESC-последовательности (F-клавиши, стрелки и т.д.)
@@ -154,7 +292,9 @@ int main() {
             // === Обработка печатаемых символов ===
             /* Пока в строке меньше 40 символов - просто дописываем символ
                в буфер и сразу показываем его на экране */
-            if (line_len < 40) {
+            if (total_len + 4 >= (int)sizeof(buffer)) {
+                putchar(bell_char);        // буфер заполнен - дальше некуда
+            } else if (line_len < 40) {
                 buffer[total_len++] = c;
                 putchar(c);
             } else {
@@ -201,6 +341,13 @@ int main() {
                         memcpy(buffer + total_len, word, word_len);
                         total_len += word_len;
                         for (int i = 0; i < word_len; i++) putchar(word[i]);
+
+                        /* Если слово заняло все 40 столбцов, новый символ
+                           должен начать следующую строку */
+                        if (word_len >= 40) {
+                            buffer[total_len++] = '\n';
+                            putchar('\n');
+                        }
 
                         // Добавляем новый символ
                         buffer[total_len++] = c;
