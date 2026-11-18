@@ -18,9 +18,7 @@ void alarm_handler(int sig) {
   (void)sig;
   printf("\n[TIMEOUT] Time is up! Printing full file content...\n");
   if (global_map != MAP_FAILED && global_size > 0) {
-    if (write(STDOUT_FILENO, global_map, global_size) != (ssize_t)global_size) {
-      _exit(EXIT_FAILURE);
-    }
+    write(STDOUT_FILENO, global_map, global_size);
   }
   _exit(EXIT_SUCCESS);
 }
@@ -34,11 +32,7 @@ int main(int argc, char *argv[]) {
   int fd = open(argv[1], O_RDONLY);
 
   struct stat st;
-  if (fstat(fd, &st) == -1) {
-    perror("Ошибка fstat");
-    close(fd);
-    return EXIT_FAILURE;
-  }
+  fstat(fd, &st);
 
   if (st.st_size == 0) {
     printf("File is empty.\n");
@@ -50,19 +44,9 @@ int main(int argc, char *argv[]) {
   global_map = (char *)mmap(NULL, global_size, PROT_READ, MAP_PRIVATE, fd, 0);
   close(fd);
 
-  if (global_map == MAP_FAILED) {
-    perror("Ошибка mmap");
-    return EXIT_FAILURE;
-  }
-
   int capacity = 10;
   int num_lines = 0;
   LineInfo *table = (LineInfo *)malloc(capacity * sizeof(LineInfo));
-  if (table == NULL) {
-    perror("Ошибка выделения памяти для таблицы");
-    munmap(global_map, global_size);
-    return EXIT_FAILURE;
-  }
 
   long line_start = 0;
   int current_line_len = 0;
@@ -73,14 +57,7 @@ int main(int argc, char *argv[]) {
     if (global_map[i] == '\n') {
       if (num_lines >= capacity) {
         capacity *= 2;
-        LineInfo *temp =
-            (LineInfo *)realloc(table, capacity * sizeof(LineInfo));
-        if (temp == NULL) {
-          perror("Ошибка перераспределения памяти");
-          free(table);
-          munmap(global_map, global_size);
-          return EXIT_FAILURE;
-        }
+        LineInfo *temp = (LineInfo *)realloc(table, capacity * sizeof(LineInfo));
         table = temp;
       }
 
@@ -97,12 +74,6 @@ int main(int argc, char *argv[]) {
     if (num_lines >= capacity) {
       capacity += 1;
       LineInfo *temp = (LineInfo *)realloc(table, capacity * sizeof(LineInfo));
-      if (temp == NULL) {
-        perror("Ошибка перераспределения памяти");
-        free(table);
-        munmap(global_map, global_size);
-        return EXIT_FAILURE;
-      }
       table = temp;
     }
     table[num_lines].offset = line_start;
@@ -117,12 +88,7 @@ int main(int argc, char *argv[]) {
   }
   printf("-------------------------\n");
 
-  if (signal(SIGALRM, alarm_handler) == SIG_ERR) {
-    perror("Ошибка установки обработчика сигнала");
-    free(table);
-    munmap(global_map, global_size);
-    return EXIT_FAILURE;
-  }
+  signal(SIGALRM, alarm_handler);
 
   int target_line;
   while (1) {

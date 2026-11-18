@@ -1,4 +1,4 @@
-CC = gcc
+C = gcc
 CFLAGS = -O2
 TARGET = list_strings
 SRC = list_strings.c
