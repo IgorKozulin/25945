@@ -1,99 +1,100 @@
-/* Лабораторная работа №25: родитель передаёт текст через pipe, ребёнок переводит его в верхний регистр и печатает. */
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <string.h>
-#include <ctype.h>
-#include <sys/wait.h>
+/* Лабораторная работа №25: родитель передаёт текст через pipe, ребёнок переводит латиницу и кириллицу в верхний регистр и печатает. */
+#include <stdio.h>      /* printf, fgets, stdin */
+#include <stdlib.h>     /* exit, EXIT_* */
+#include <unistd.h>     /* pipe, fork, read, write, close */
+#include <string.h>     /* strlen */
+#include <ctype.h>      /* toupper */
+#include <sys/wait.h>   /* wait */
 
-#define BUF_SIZE 1024   // размер буферов для чтения и ввода
+#define BUF_SIZE 1024   /* размер буферов для чтения и ввода */
 
-int main() {
-    int pipefd[2];   // два конца канала
-    pid_t pid;
+/* Верхний регистр: ASCII через toupper, кириллицу UTF-8 переводим вручную,
+   потому что toupper в C-locale знает только ASCII */
+static void to_upper(char *buf, ssize_t len) {
+    for (ssize_t i = 0; i < len; i++) {            /* идём по байтам строки */
+        unsigned char c = (unsigned char)buf[i];   /* текущий байт */
 
-    /* pipefd[0] - читать, pipefd[1] - писать */
-    if (pipe(pipefd) == -1) {
-        perror("pipe");
-        exit(EXIT_FAILURE);
-    }
-
-    /* После fork оба процесса видят оба конца канала */
-    pid = fork();
-    if (pid == -1) {
-        perror("fork");
-        exit(EXIT_FAILURE);
-    }
-
-    /* ---------- Ветка ребёнка: читает из канала ---------- */
-    if (pid == 0) {
-        /* Закрываем пишущий конец: иначе read не увидит EOF */
-        close(pipefd[1]);
-        char buffer[BUF_SIZE];
-        ssize_t n;
-        printf("[CHILD] Процесс запущен, жду данные из канала...\n");
-        fflush(stdout);
-
-        /* read возвращает 0, когда родитель закрыл свой конец канала */
-        while ((n = read(pipefd[0], buffer, sizeof(buffer) - 1)) > 0) {
-            buffer[n] = '\0';   // завершаем строку для printf
-            /* toupper только для печатаемых, служебные байты не трогаем */
-            for (ssize_t i = 0; i < n; i++) {
-                unsigned char ch = (unsigned char)buffer[i];
-                if (isprint(ch) || ch == '\n' || ch == '\t' || ch == ' ') {
-                    buffer[i] = toupper(ch);
-                }
+        if (c < 0x80) {                            /* ASCII: обычный toupper */
+            buf[i] = (char)toupper(c);
+        } else if (c == 0xD0 && i + 1 < len) {     /* кириллица а-п: D0 B0..BF */
+            unsigned char c2 = (unsigned char)buf[i + 1];   /* второй байт */
+            if (c2 >= 0xB0 && c2 <= 0xBF) {        /* это строчная а-п */
+                buf[i + 1] = (char)(c2 - 0x20);    /* -> А-П (D0 90..9F) */
             }
-            printf("[CHILD] Принято и переведено в верхний регистр: %s", buffer);
-            fflush(stdout);
+            i++;                                   /* второй байт уже обработан */
+        } else if (c == 0xD1 && i + 1 < len) {     /* кириллица р-я и ё */
+            unsigned char c2 = (unsigned char)buf[i + 1];   /* второй байт */
+            if (c2 >= 0x80 && c2 <= 0x8F) {        /* строчная р-я */
+                buf[i] = (char)0xD0;               /* первый байт -> D0 */
+                buf[i + 1] = (char)(c2 + 0x20);    /* -> Р-Я (D0 A0..AF) */
+            } else if (c2 == 0x91) {               /* строчная ё */
+                buf[i] = (char)0xD0;               /* первый байт -> D0 */
+                buf[i + 1] = (char)0x81;           /* -> Ё (D0 81) */
+            }
+            i++;                                   /* второй байт уже обработан */
+        }
+    }
+}
+
+int main() {                            /* точка входа */
+    int pipefd[2];                      /* дескрипторы канала: [0] чтение, [1] запись */
+    pid_t pid;                          /* pid дочернего процесса */
+
+    if (pipe(pipefd) == -1) {           /* создаём канал */
+        perror("pipe");                 /* печатаем причину ошибки */
+        exit(EXIT_FAILURE);             /* завершаемся с ошибкой */
+    }
+
+    pid = fork();                       /* создаём дочерний процесс */
+    if (pid == -1) {                    /* fork не удался? */
+        perror("fork");                 /* сообщаем об ошибке */
+        exit(EXIT_FAILURE);             /* выходим */
+    }
+
+    if (pid == 0) {                     /* pid == 0 — это потомок */
+        close(pipefd[1]);               /* потомку не нужен конец записи */
+        char buffer[BUF_SIZE];          /* буфер для принятых данных */
+        ssize_t n;                      /* сколько байт прочитали */
+        printf("[CHILD] Процесс запущен, жду данные из канала...\n");   /* лог потомка */
+        fflush(stdout);                 /* сразу выводим лог */
+
+        while ((n = read(pipefd[0], buffer, sizeof(buffer) - 1)) > 0) { /* читаем до EOF */
+            buffer[n] = '\0';           /* завершаем строку для printf */
+            to_upper(buffer, n);        /* переводим весь текст в верхний регистр */
+            printf("[CHILD] Принято и переведено в верхний регистр: %s", buffer);  /* печатаем результат */
+            fflush(stdout);             /* сбрасываем буфер вывода */
         }
 
-        close(pipefd[0]);   // данные закончились - закрываем свой конец
-        exit(EXIT_SUCCESS);   // exit, а не return: не выполнять код родителя
-    } else {
-        /* ---------- Ветка родителя: пишет в канал ---------- */
-        /* Родителю читающий конец не нужен */
-        close(pipefd[0]);
-        printf("[PARENT] Канал создан, связь установлена.\n");
-        printf("[PARENT] Вводите строки; пустая строка или Ctrl+D - конец ввода:\n");
+        close(pipefd[0]);               /* данные закончились — закрываем чтение */
+        exit(EXIT_SUCCESS);             /* exit, а не return: не выполнять код родителя */
+    } else {                            /* иначе — ветка родителя */
+        close(pipefd[0]);               /* родителю не нужен конец чтения */
+        printf("[PARENT] Канал создан, связь установлена.\n");   /* лог родителя */
+        printf("[PARENT] Вводите строки; пустая строка или Ctrl+D - конец ввода:\n");  /* подсказка */
 
-        char input[BUF_SIZE];
-        while (1) {
-            printf("> ");   // приглашение ко вводу
-            fflush(stdout);
+        char input[BUF_SIZE];           /* буфер для введённой строки */
+        while (1) {                     /* бесконечный цикл ввода */
+            printf("> ");               /* приглашение ко вводу */
+            fflush(stdout);             /* показываем приглашение сразу */
 
-            /* NULL - Ctrl+D или конец потока ввода */
-            if (fgets(input, sizeof(input), stdin) == NULL) {
-                break;
+            if (fgets(input, sizeof(input), stdin) == NULL) {   /* читаем строку, NULL = EOF/Ctrl+D */
+                break;                  /* конец ввода */
             }
 
-            /* Пустая строка тоже завершает ввод */
-            if (input[0] == '\n' || input[0] == '\0') {
-                printf("[PARENT] Пустая строка получена, ввод завершён.\n");
-                break;
+            if (input[0] == '\n' || input[0] == '\0') {   /* пустая строка? */
+                printf("[PARENT] Пустая строка получена, ввод завершён.\n");  /* лог */
+                break;                  /* выходим из цикла */
             }
 
-            /* Отфильтровываем непечатаемые символы перед отправкой */
-            char filtered[BUF_SIZE];
-            size_t j = 0;
-            for (size_t i = 0; input[i] != '\0'; i++) {
-                unsigned char ch = (unsigned char)input[i];
-                if (isprint(ch) || ch == '\n' || ch == '\t' || ch == ' ') {
-                    filtered[j++] = ch;
-                }
-            }
-            filtered[j] = '\0';
-
-            /* Пишем в канал только если после фильтра что-то осталось */
-            if (j > 0) {
-                write(pipefd[1], filtered, j);
-            }
+            /* отправляем строку как есть: кириллица в UTF-8 — это байты >= 128,
+               и фильтр isprint() их выбрасывал */
+            write(pipefd[1], input, strlen(input));   /* пишем строку в канал */
         }
 
-        close(pipefd[1]);   // закрытие даёт ребёнку EOF
-        wait(NULL);         // ждём ребёнка, чтобы не остался зомби
-        printf("[PARENT] Дочерний процесс завершился, родитель выходит.\n");
+        close(pipefd[1]);               /* закрываем запись — потомок получит EOF */
+        wait(NULL);                     /* ждём потомка, чтобы не остался зомби */
+        printf("[PARENT] Дочерний процесс завершился, родитель выходит.\n");  /* финальный лог */
     }
 
-    return 0;
+    return 0;                           /* успешное завершение программы */
 }
