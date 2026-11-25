@@ -1,54 +1,109 @@
-/* Лабораторная работа №21. Пищалка.
- *
- * Задание: программа входит в бесконечный цикл и издаёт звуковой сигнал на
- * терминале каждый раз, когда приходит SIGINT (по умолчанию - Ctrl-C).
- * При получении SIGQUIT (по умолчанию - Ctrl-\) она выводит, сколько раз
- * прозвучал сигнал, и завершается.
- *
- * Основа программы - обработчики сигналов: signal(2) подменяет действие по
- * умолчанию (для SIGINT это завершение процесса) на вызов нашей функции.
- */
+/* Лабораторная работа №21: «пищалка» — по SIGINT издаёт звук и считает сигналы, по SIGQUIT печатает счётчик и завершается. */
+#define _POSIX_C_SOURCE 200809L
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <signal.h>
+#include <string.h>
+#include <time.h>
 
-#include <stdio.h>      /* printf, puts             */
-#include <signal.h>     /* signal, SIGINT, SIGQUIT  */
-#include <stdlib.h>     /* exit                     */
-#include <unistd.h>     /* write, pause             */
-#include <string.h>     /* (прямых вызовов нет)     */
+#define MAX_MORSE 1024   // максимальная длина шаблона морзе
 
-/* Счётчик полученных SIGINT. Глобальная переменная, потому что обработчик
-   сигнала вызывается асинхронно и не может получать аргументы из main.
-   volatile - чтобы компилятор не закешировал значение в регистре */
-int c = 0;
+/* Флаги меняются в обработчиках сигналов, поэтому volatile sig_atomic_t:
+   volatile - компилятор не закеширует значение в регистре,
+   sig_atomic_t - запись/чтение не разорвётся сигналом */
+static volatile sig_atomic_t int_count = 0;     // сколько раз пришёл SIGINT
+static volatile sig_atomic_t quit_requested = 0; // пора завершаться
+static volatile sig_atomic_t play_morse = 0;    // нужно проиграть шаблон
 
-/* Обработчик SIGINT: пикнуть и посчитать сигнал */
-void i() {
-    /* На старых системах (SVR4) signal() сбрасывает обработчик на действие
-       по умолчанию после первого срабатывания, поэтому переустанавливаем
-       его заново - иначе второй Ctrl-C убил бы программу */
-    signal(SIGINT, i);
-    /* write(2) - асинхронно-безопасный вызов, в отличие от printf:
-       из обработчика сигнала его использовать можно. "\a" - BEL (CTRL-G),
-       терминал сам выдаёт звуковой сигнал */
-    write(1, "\a", 1);
-    c++;   /* увеличиваем счётчик прозвучавших сигналов */
+static char morse_pattern[MAX_MORSE];   // шаблон из файла или "-.-"
+static size_t morse_len = 0;
+
+/* Обработчик SIGINT: считаем сигнал и просим main издать звук.
+   В обработчике можно только простые действия — никаких printf и malloc. */
+static void on_sigint(int sig) {
+    (void)sig;   // аргумент не используется
+    if (int_count < 2147483647) int_count++;   // защита от переполнения
+    play_morse = 1;   // сам звук издаёт main, обработчик только ставит флаг
 }
 
-/* Обработчик SIGQUIT: сообщить счётчик и выйти */
-void q() {
-    printf("\nСигнал прозвучал %d раз\n", c);
-    exit(0);   /* обычное завершение программы с кодом 0 */
+/* Обработчик SIGQUIT: просим main выйти из цикла */
+static void on_sigquit(int sig) {
+    (void)sig;
+    quit_requested = 1;   // main увидит флаг и выйдет из цикла
 }
 
-int main() {
-    puts("Программа входит в бесконечный цикл и издает звуковой сигнал на терминале при каждом получении SIGINT (по умолчанию Ctrl+C). При получении SIGQUIT (по умолчанию Ctrl+\\), она выведет сообщение с количеством раз, когда прозвучал сигнал, и завершится.");
-    /* Привязываем к сигналам свои обработчики. После этого Ctrl-C и Ctrl-\\
-       не завершают процесс, а вызывают функции i() и q() */
-    signal(SIGINT, i);
-    signal(SIGQUIT, q);
-    /* Бесконечный цикл ожидания. pause(2) усыпляет процесс и возвращает
-       управление только после доставки сигнала - процессорное время не
-       тратится впустую */
-    for (;;) {
-        pause();
+/* Читает шаблон из файла целиком; -1 — если файл не открылся */
+static int load_morse(const char *path) {
+    FILE *f = fopen(path, "r");
+    if (!f) return -1;
+    /* читаем не больше MAX_MORSE-1 байт, чтобы осталось место под '\0' */
+    morse_len = fread(morse_pattern, 1, MAX_MORSE - 1, f);
+    morse_pattern[morse_len] = '\0';   // завершаем строку
+    fclose(f);
+    return 0;
+}
+
+int main(int argc, char *argv[]) {
+    struct sigaction sa_int, sa_quit;
+
+    /* Шаблон можно задать файлом — первым аргументом командной строки */
+    if (argc > 1) {
+        if (load_morse(argv[1]) == -1) {
+            perror("load_morse");
+            return EXIT_FAILURE;
+        }
+        printf("[DEBUG] Загружено %zu символов из %s\n", morse_len, argv[1]);
+    } else {
+        /* По умолчанию — буква K (-.-) */
+        strcpy(morse_pattern, "-.-");
+        morse_len = 3;
+        printf("[DEBUG] Файл не указан, использую стандартный '-.-'\n");
     }
+
+    /* sigaction надёжнее signal: обработчик не сбрасывается после сигнала */
+    sa_int.sa_handler = on_sigint;
+    sigemptyset(&sa_int.sa_mask);   // другие сигналы не блокируем
+    sa_int.sa_flags = 0;            // поведение по умолчанию
+
+    sa_quit.sa_handler = on_sigquit;
+    sigemptyset(&sa_quit.sa_mask);
+    sa_quit.sa_flags = 0;
+
+    /* Регистрируем обработчики: SIGINT — Ctrl+C, SIGQUIT — Ctrl+\ */
+    if (sigaction(SIGINT, &sa_int, NULL) == -1 ||
+        sigaction(SIGQUIT, &sa_quit, NULL) == -1) {
+        perror("sigaction");
+        return EXIT_FAILURE;
+    }
+
+    printf("Press Ctrl+C to play Morse; Ctrl+\\ to exit.\n");
+    fflush(stdout);   // иначе приглашение может остаться в буфере
+
+    /* Основной цикл: спим в pause(), пока не придёт сигнал */
+    while (!quit_requested) {
+        /* Флаг выставил обработчик — проигрываем шаблон */
+        if (play_morse) {
+            play_morse = 0;
+            char bell = '\a';
+            struct timespec ts_beep = {0, 200000 * 1000};   // 200 мс
+            struct timespec ts_pause = {1, 0};              // 1 с
+
+            /* '-' — бип, '.' — пауза; nanosleep не жжёт процессор */
+            for (size_t i = 0; i < morse_len; i++) {
+                if (morse_pattern[i] == '-') {
+                    /* BEL пишем напрямую в stdout, без буфера stdio */
+                    write(STDOUT_FILENO, &bell, 1);
+                    nanosleep(&ts_beep, NULL);
+                } else if (morse_pattern[i] == '.') {
+                    nanosleep(&ts_pause, NULL);
+                }
+            }
+        }
+        pause();   // спим до следующего сигнала
+    }
+
+    /* Сюда попадаем после SIGQUIT: печатаем, сколько было SIGINT */
+    printf("\nSIGINT received %d time(s). Exiting.\n", (int)int_count);
+    return EXIT_SUCCESS;
 }

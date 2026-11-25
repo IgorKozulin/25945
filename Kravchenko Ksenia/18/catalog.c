@@ -1,103 +1,126 @@
-/* Лабораторная работа №18. Листинг каталога - аналог команды ls -ld.
- *
- * Для каждого аргумента программа печатает строку вроде:
- *   drwxr-xr-x 2 user group 4096 17 19:02 dirname
- * т.е. тип файла и права доступа, число связей, владельца, группу,
- * размер, дату модификации и имя файла.
- * Все поля имеют постоянную ширину, чтобы вывод выглядел таблицей.
- */
+/* Лабораторная работа №18: аналог ls -ld — тип, права, число связей, владелец, группа, размер и дата для каждого аргумента. */
+#define _POSIX_C_SOURCE 200809L
 
-#include <stdio.h>      /* printf, snprintf               */
-#include <sys/stat.h>   /* stat, struct stat, S_ISDIR,
-                           S_ISREG, S_IRUSR ... S_IXOTH   */
-#include <pwd.h>        /* getpwuid, struct passwd        */
-#include <grp.h>        /* getgrgid, struct group         */
-#include <time.h>       /* localtime, strftime            */
-#include <string.h>     /* (прямых вызовов в коде нет)    */
-#include <libgen.h>     /* basename                       */
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <pwd.h>
+#include <grp.h>
+#include <time.h>
+#include <string.h>
+#include <libgen.h>
+#include <limits.h>
 
-int main(int argc, char *argv[]) {
-    /* Нужен хотя бы один аргумент - имя файла или каталога */
-    if (argc < 2) {
-        printf("Usage: %s <file1> [file2] ...\n", argv[0]);
-        printf("Log: No arguments provided. Exiting.\n");
-        return 1;
+/* Заполняет строку вида "drwxr-xr-x":
+   1 символ типа файла + 3 группы по 3 права. */
+static void make_permissions(mode_t mode, char p[11]){
+/* Первый символ — тип файла: d каталог, - обычный, l симлинк, ? прочее */
+if (S_ISDIR(mode))
+p[0] = 'd';
+else if (S_ISREG(mode))
+p[0] = '-';
+else if (S_ISLNK(mode))
+p[0] = 'l';
+else
+p[0] = '?';
+
+/* Права владельца: бит установлен — буква, иначе прочерк */
+p[1] = (mode & S_IRUSR) ? 'r' : '-';
+p[2] = (mode & S_IWUSR) ? 'w' : '-';
+p[3] = (mode & S_IXUSR) ? 'x' : '-';
+
+/* Права группы */
+p[4] = (mode & S_IRGRP) ? 'r' : '-';
+p[5] = (mode & S_IWGRP) ? 'w' : '-';
+p[6] = (mode & S_IXGRP) ? 'x' : '-';
+
+/* Права всех остальных */
+p[7] = (mode & S_IROTH) ? 'r' : '-';
+p[8] = (mode & S_IWOTH) ? 'w' : '-';
+p[9] = (mode & S_IXOTH) ? 'x' : '-';
+
+p[10] = '\0';   // без нуля printf не сможет напечатать строку
+}
+
+int main(int argc, char *argv[]){
+int errors = 0;   // станет 1, если хотя бы один аргумент не удалось обработать
+
+/* Без аргументов печатаем подсказку и выходим с ошибкой */
+if (argc < 2) {
+    fprintf(stderr, "Usage: %s <file> [file ...]\n", argv[0]);
+    return EXIT_FAILURE;
+}
+
+/* Обрабатываем каждый аргумент; ошибка одного не прерывает остальные */
+for (int i = 1; i < argc; i++) {
+    struct stat st;              // информация об inode
+    char permissions[11];        // "drwxr-xr-x" + '\0'
+    char date[32];               // строка с датой модификации
+    char path_copy[PATH_MAX];    // копия пути для basename
+    char *name;                  // только имя файла, без каталогов
+    const char *owner_name = "?";   // запасные значения, если имени нет
+    const char *group_name = "?";
+    struct passwd *pw;
+    struct group *gr;
+    struct tm *tm_info;
+    time_t now;
+
+    /* lstat, а не stat: для симлинка берём информацию о самой ссылке */
+    if (lstat(argv[i], &st) == -1) {
+        perror(argv[i]);   // печатает причину ошибки с именем файла
+        errors = 1;
+        continue;
     }
 
-    printf("Log: Starting processing of %d files.\n", argc - 1);
+    make_permissions(st.st_mode, permissions);
 
-    /* Обрабатываем каждый аргумент командной строки по очереди */
-    for (int i = 1; i < argc; i++) {
-        char *filepath = argv[i];
-        /* basename отбрасывает каталоги и оставляет только имя файла:
-           /tmp/test/a.txt -> a.txt. ВНИМАНИЕ: basename может испортить
-           исходную строку, но filepath - лишь копия указателя argv[i] */
-        char *filename = basename(filepath);  // Get only the filename
+    /* UID/GID -> имена; если записи нет, остаётся "?" */
+    pw = getpwuid(st.st_uid);
+    if (pw != NULL)
+        owner_name = pw->pw_name;
 
+    gr = getgrgid(st.st_gid);
+    if (gr != NULL)
+        group_name = gr->gr_name;
 
-        /* stat(2) заполняет структуру st информацией об inode файла
-           (не открывая его). Не удалось - сообщаем и переходим к следующему */
-        struct stat st;
-        if (stat(filepath, &st) != 0) {
-            printf("Log: Failed to stat %s. Skipping.\n", filepath);
-            perror("stat");
-            continue;
+    /* Дата: как в ls — для файлов старше ~6 месяцев вместо времени печатаем год */
+    tm_info = localtime(&st.st_mtime);
+    if (tm_info != NULL) {
+        now = time(NULL);
+
+        if (now != (time_t)-1 &&
+            difftime(now, st.st_mtime) > 183.0 * 24 * 60 * 60) {
+            strftime(date, sizeof(date), "%b %e  %Y", tm_info);
+        } else {
+            strftime(date, sizeof(date), "%b %e %H:%M", tm_info);
         }
-
-        // Type
-        /* Первый символ строки - тип файла. Макросы S_IS* разбирают
-           поле st_mode: каталог -> 'd', обычный файл -> '-',
-           всё остальное (устройство, сокет, FIFO) -> '?' */
-        char type = '?';
-        if (S_ISDIR(st.st_mode)) type = 'd';
-        else if (S_ISREG(st.st_mode)) type = '-';
-
-        // Permissions
-        /* Девять символов прав доступа: три группы по три бита
-           (владелец, группа, остальные). Бит установлен -> буква,
-           иначе прочерк. Индексы 0..2 - user, 3..5 - group, 6..8 - other */
-        char perm[10];
-        perm[0] = (st.st_mode & S_IRUSR) ? 'r' : '-';
-        perm[1] = (st.st_mode & S_IWUSR) ? 'w' : '-';
-        perm[2] = (st.st_mode & S_IXUSR) ? 'x' : '-';
-        perm[3] = (st.st_mode & S_IRGRP) ? 'r' : '-';
-        perm[4] = (st.st_mode & S_IWGRP) ? 'w' : '-';
-        perm[5] = (st.st_mode & S_IXGRP) ? 'x' : '-';
-        perm[6] = (st.st_mode & S_IROTH) ? 'r' : '-';
-        perm[7] = (st.st_mode & S_IWOTH) ? 'w' : '-';
-        perm[8] = (st.st_mode & S_IXOTH) ? 'x' : '-';
-        perm[9] = '\0';   // строка для printf должна быть завершена нулём
-
-        // Owner and group
-        /* Числовые UID/GID переводим в имена через базы пользователей
-           и групп; если записи нет - печатаем "unknown" вместо падения */
-        struct passwd *pwd = getpwuid(st.st_uid);
-        struct group *grp = getgrgid(st.st_gid);
-        char *owner = pwd ? pwd->pw_name : "unknown";
-        char *group = grp ? grp->gr_name : "unknown";
-
-        // Size (only for regular files)
-        /* st_size - размер в байтах: для обычного файла это его длина,
-           для каталога - размер самого каталога, а не его содержимого */
-        char size_str[20] = "";
-        snprintf(size_str, sizeof(size_str), "%ld", (long)st.st_size);
-
-        // Modification time
-        /* st_mtime - время последней модификации в секундах от эпохи.
-           localtime переводит его в локальное время, strftime - в строку
-           «день месяц часы:минуты» */
-        char time_str[20];
-        struct tm *tm = localtime(&st.st_mtime);
-        strftime(time_str, sizeof(time_str), "%d %H:%M", tm);
-
-        // Print in table format with fixed widths
-        /* Формат: тип+права, число ссылок, владелец, группа, размер, время, имя.
-           %-8s/%-5s - выравнивание влево по ширине поля, чтобы колонки
-           не «плясали» при разной длине имён */
-        printf("%c%s %ld %-8s %-8s %-5s %s %s\n",
-               type, perm, (long)st.st_nlink, owner, group, size_str, time_str, filename);
+    } else {
+        strcpy(date, "?");
     }
 
-    printf("Log: All files processed.\n");
-    return 0;
+    /* basename может изменить строку, поэтому работаем с копией пути */
+    if (strlen(argv[i]) >= sizeof(path_copy)) {
+        fprintf(stderr, "%s: path is too long\n", argv[i]);
+        errors = 1;
+        continue;
+    }
+
+    strcpy(path_copy, argv[i]);
+    name = basename(path_copy);   // /tmp/a.txt -> a.txt
+
+    /* Поля постоянной ширины, чтобы вывод был таблицей */
+    printf("%-10s %3lu %-8s %-8s ",
+           permissions,           // тип и права, например drwxr-xr-x
+           (unsigned long)st.st_nlink,   // число жёстких ссылок
+           owner_name,
+           group_name);
+
+    printf("%10lld ", (long long)st.st_size);   // размер в байтах
+
+    printf("%-12s %s\n", date, name);
+}
+
+/* Ошибка хотя бы с одним файлом — ненулевой код возврата */
+return errors ? EXIT_FAILURE : EXIT_SUCCESS;
 }
