@@ -58,7 +58,7 @@ int main(int argc, char *argv[]) {
     const char *group_name = gr ? gr->gr_name : "?";
 
     char size_str[32];
-    if (S_ISREG(st.st_mode)) {
+    if (S_ISREG(st.st_mode) || S_ISDIR(st.st_mode)) {
       snprintf(size_str, sizeof(size_str), "%lld", (long long)st.st_size);
     } else {
       size_str[0] = '\0';

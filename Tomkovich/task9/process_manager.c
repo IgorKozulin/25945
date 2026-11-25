@@ -9,6 +9,7 @@
 
 int main(int argc, char *argv[]) {
   pid_t pid;
+  pid_t pid2;
   int status;
   int exitCode;
 
@@ -54,6 +55,23 @@ int main(int argc, char *argv[]) {
     _exit(127);
   }
 
+  pid2 = fork();
+  if (pid2 == -1) {
+    perror("fork");
+    return 1;
+  }
+
+  if (pid2 == 0) {
+    sleep(2);
+    printf("I am the second process!");
+    fflush(stdout);
+    _exit(0);
+  }
+
+  printf("[PARENT] Second process started. PID: %ld\n", (long)pid2);
+  printf("[PARENT] Parent is doing some work...\n");
+  fflush(stdout);
+
   printf("[PARENT] Process started. Child PID: %ld\n", (long)pid);
   printf("[PARENT] Parent is doing some work...\n");
   fflush(stdout);
@@ -73,6 +91,13 @@ int main(int argc, char *argv[]) {
     exitCode = WEXITSTATUS(status);
   } else {
     exitCode = 128 + WTERMSIG(status);
+  }
+
+  while (waitpid(pid2, &status, 0) == -1) {
+    if (errno != EINTR) {
+      perror("waitpid pid2");
+      return 1;
+    }
   }
 
   printf("[PARENT] Child exit code: %d\n", exitCode);
