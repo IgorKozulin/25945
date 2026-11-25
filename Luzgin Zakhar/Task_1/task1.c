@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <sys/resource.h>
 #include <sys/types.h>
 #include <ulimit.h>
@@ -20,7 +21,7 @@ static void usage(const char *program)
 {
     fprintf(stderr,
             "Использование: %s [-i] [-s] [-p] [-u] [-Uчисло] "
-            "[-c] [-Cчисло] [-d] [-v] [-Vимя=значение]\n",
+            "[-c] [-Cчисло] [-d] [-v] [-Vимя=значение] [-t]\n",
             program);
 }
 
@@ -140,6 +141,53 @@ static int update_environment(const char *pair)
     return result;
 }
 
+/* -t: показывает время Новосибирска, не меняя TZ для остальных опций. */
+static int print_novosibirsk_time(void)
+{
+    const char *old_tz = getenv("TZ");
+    char *saved_tz = NULL;
+    time_t now;
+    struct tm *local;
+    char formatted[128];
+    int result = 0;
+
+    /* Сохраняем исходный часовой пояс. */
+    if (old_tz != NULL) {
+        saved_tz = strdup(old_tz);
+        if (saved_tz == NULL) {
+            perror("strdup");
+            return -1;
+        }
+    }
+
+    /* Используем часовой пояс Новосибирска. */
+    if (setenv("TZ", "Asia/Novosibirsk", 1) == -1) {
+        perror("setenv(TZ)");
+        free(saved_tz);
+        return -1;
+    }
+    tzset();
+
+    now = time(NULL);
+    if (now == (time_t)-1 || (local = localtime(&now)) == NULL ||
+        strftime(formatted, sizeof(formatted), "%d/%m/%Y %H:%M %Z", local) == 0) {
+        fputs("Ошибка получения времени Новосибирска\n", stderr);
+        result = -1;
+    } else {
+        printf("Время в Новосибирске: %s\n", formatted);
+    }
+
+    /* Восстанавливаем TZ для других опций программы. */
+    if ((saved_tz != NULL && setenv("TZ", saved_tz, 1) == -1) ||
+        (saved_tz == NULL && unsetenv("TZ") == -1)) {
+        perror("восстановление TZ");
+        result = -1;
+    }
+    tzset();
+    free(saved_tz);
+    return result;
+}
+
 static int execute_action(const struct action *current)
 {
     char directory[4096];
@@ -186,6 +234,8 @@ static int execute_action(const struct action *current)
         break;
     case 'V':
         return update_environment(current->argument);
+    case 't':
+        return print_novosibirsk_time();
     default:
         return -1;
     }
@@ -207,7 +257,7 @@ int main(int argc, char **argv)
     }
 
     opterr = 0;
-    while ((option = getopt(argc, argv, ":ispuU:cC:dvV:")) != -1) {
+    while ((option = getopt(argc, argv, ":ispuU:cC:dvV:t")) != -1) {
         if (option == ':' || option == '?') {
             if (option == ':')
                 fprintf(stderr, "Отсутствует аргумент опции -%c\n", optopt);

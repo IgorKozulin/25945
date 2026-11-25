@@ -96,3 +96,4 @@ int main(void)
     free_list(head);
     return EXIT_SUCCESS;
 }
+// вывести 1 и последнюю 
