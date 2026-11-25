@@ -9,17 +9,7 @@ typedef struct Node {
 
 void append(Node **head, const char *str) {
   Node *new_node = (Node *)malloc(sizeof(Node));
-  if (new_node == NULL) {
-    perror("Ошибка выделения памяти для узла");
-    exit(EXIT_FAILURE);
-  }
-
   new_node->data = (char *)malloc(strlen(str) + 1);
-  if (new_node->data == NULL) {
-    perror("Ошибка выделения памяти для строки");
-    free(new_node);
-    exit(EXIT_FAILURE);
-  }
 
   strcpy(new_node->data, str);
   new_node->next = NULL;
@@ -33,6 +23,21 @@ void append(Node **head, const char *str) {
     }
     current->next = new_node;
   }
+}
+
+void reverse_list(Node **head) {
+  Node *prev = NULL;
+  Node *current = *head;
+  Node *next = NULL;
+
+  while (current != NULL) {
+    next = current->next;
+    current->next = prev;
+    prev = current;
+    current = next;
+  }
+
+  *head = prev;
 }
 
 void print_list(const Node *head) {
@@ -60,9 +65,7 @@ int main(void) {
   printf("Вводите строки:\n");
 
   while (1) {
-    if (fgets(buffer, sizeof(buffer), stdin) == NULL) {
-      break;
-    }
+    fgets(buffer, sizeof(buffer), stdin);
 
     if (buffer[0] == '.') {
       break;
@@ -75,6 +78,7 @@ int main(void) {
 
     append(&head, buffer);
   }
+  reverse_list(&head);
 
   printf("\nСодержимое списка:\n");
   print_list(head);

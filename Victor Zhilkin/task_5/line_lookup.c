@@ -15,19 +15,9 @@ int main(int argc, char *argv[]) {
   }
 
   int fd = open(argv[1], O_RDONLY);
-  if (fd == -1) {
-    perror("Ошибка открытия файла");
-    return EXIT_FAILURE;
-  }
-
   int capacity = 10;
   int num_lines = 0;
   LineInfo *table = (LineInfo *)malloc(capacity * sizeof(LineInfo));
-  if (table == NULL) {
-    perror("Ошибка выделения памяти для таблицы");
-    close(fd);
-    return EXIT_FAILURE;
-  }
 
   char ch;
   long line_start = 0;
@@ -39,14 +29,7 @@ int main(int argc, char *argv[]) {
     if (ch == '\n') {
       if (num_lines >= capacity) {
         capacity *= 2;
-        LineInfo *temp =
-            (LineInfo *)realloc(table, capacity * sizeof(LineInfo));
-        if (temp == NULL) {
-          perror("Ошибка перераспределения памяти");
-          free(table);
-          close(fd);
-          return EXIT_FAILURE;
-        }
+        LineInfo *temp = (LineInfo *)realloc(table, capacity * sizeof(LineInfo));
         table = temp;
       }
 
@@ -63,12 +46,6 @@ int main(int argc, char *argv[]) {
     if (num_lines >= capacity) {
       capacity += 1;
       LineInfo *temp = (LineInfo *)realloc(table, capacity * sizeof(LineInfo));
-      if (temp == NULL) {
-        perror("Ошибка перераспределения памяти");
-        free(table);
-        close(fd);
-        return EXIT_FAILURE;
-      }
       table = temp;
     }
     table[num_lines].offset = line_start;
@@ -78,17 +55,27 @@ int main(int argc, char *argv[]) {
 
   printf("--- Debug: Line Table ---\n");
   for (int i = 0; i < num_lines; i++) {
-    printf("Line %d: Offset = %ld, Length = %d\n", i + 1, table[i].offset,
-           table[i].length);
+    printf("Line %d: Offset = %ld, Length = %d\n", i + 1, table[i].offset, table[i].length);
   }
   printf("-------------------------\n");
+
+  long total_bytes = 0;
+  for (int i = 0; i < num_lines; i++) {
+    total_bytes += table[i].length;
+  }
+  printf("по таблице: %ld байт\n", total_bytes);
+
+  long real_size = lseek(fd, 0L, SEEK_END);
+  printf("lseek: %ld байт\n", real_size);
+  char cmd[512];
+  snprintf(cmd, sizeof(cmd), "ls -lh \"%s\"", argv[1]);
+  system(cmd);
 
   int target_line;
   while (1) {
     printf("Enter line number (0 to quit): ");
     if (scanf("%d", &target_line) != 1) {
-      while (getchar() != '\n')
-        ;
+      while (getchar() != '\n');
       printf("Invalid input. Please enter a number.\n");
       continue;
     }
@@ -104,24 +91,9 @@ int main(int argc, char *argv[]) {
 
     long offset = table[target_line - 1].offset;
     int length = table[target_line - 1].length;
-
-    if (lseek(fd, offset, SEEK_SET) == -1) {
-      perror("Ошибка позиционирования в файле");
-      continue;
-    }
-
+    lseek(fd, offset, SEEK_SET);
     char *line_buf = (char *)malloc(length + 1);
-    if (line_buf == NULL) {
-      perror("Ошибка выделения памяти для буфера строки");
-      continue;
-    }
-
     ssize_t bytes_read = read(fd, line_buf, length);
-    if (bytes_read == -1) {
-      perror("Ошибка чтения строки");
-      free(line_buf);
-      continue;
-    }
 
     line_buf[bytes_read] = '\0';
     printf("%s", line_buf);

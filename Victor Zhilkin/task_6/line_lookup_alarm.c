@@ -18,14 +18,10 @@ void alarm_handler(int sig) {
 
   printf("\n[TIMEOUT] Time is up! Printing full file content...\n");
 
-  if (lseek(global_fd, 0L, SEEK_SET) == -1) {
-    _exit(EXIT_FAILURE);
-  }
+  lseek(global_fd, 0L, SEEK_SET);
 
   while ((bytes = read(global_fd, buffer, sizeof(buffer))) > 0) {
-    if (write(STDOUT_FILENO, buffer, bytes) != bytes) {
-      _exit(EXIT_FAILURE);
-    }
+    write(STDOUT_FILENO, buffer, bytes);
   }
 
   _exit(EXIT_SUCCESS);
@@ -53,14 +49,7 @@ int main(int argc, char *argv[]) {
     if (ch == '\n') {
       if (num_lines >= capacity) {
         capacity *= 2;
-        LineInfo *temp =
-            (LineInfo *)realloc(table, capacity * sizeof(LineInfo));
-        if (temp == NULL) {
-          perror("Ошибка перераспределения памяти");
-          free(table);
-          close(global_fd);
-          return EXIT_FAILURE;
-        }
+        LineInfo *temp = (LineInfo *)realloc(table, capacity * sizeof(LineInfo));
         table = temp;
       }
 
@@ -77,12 +66,6 @@ int main(int argc, char *argv[]) {
     if (num_lines >= capacity) {
       capacity += 1;
       LineInfo *temp = (LineInfo *)realloc(table, capacity * sizeof(LineInfo));
-      if (temp == NULL) {
-        perror("Ошибка перераспределения памяти");
-        free(table);
-        close(global_fd);
-        return EXIT_FAILURE;
-      }
       table = temp;
     }
     table[num_lines].offset = line_start;
@@ -97,12 +80,7 @@ int main(int argc, char *argv[]) {
   }
   printf("-------------------------\n");
 
-  if (signal(SIGALRM, alarm_handler) == SIG_ERR) {
-    perror("Ошибка установки обработчика сигнала");
-    free(table);
-    close(global_fd);
-    return EXIT_FAILURE;
-  }
+  signal(SIGALRM, alarm_handler);
 
   int target_line;
   while (1) {
@@ -133,23 +111,10 @@ int main(int argc, char *argv[]) {
     long offset = table[target_line - 1].offset;
     int length = table[target_line - 1].length;
 
-    if (lseek(global_fd, offset, SEEK_SET) == -1) {
-      perror("Ошибка позиционирования в файле");
-      continue;
-    }
+    lseek(global_fd, offset, SEEK_SET);
 
     char *line_buf = (char *)malloc(length + 1);
-    if (line_buf == NULL) {
-      perror("Ошибка выделения памяти для буфера строки");
-      continue;
-    }
-
     ssize_t bytes_read = read(global_fd, line_buf, length);
-    if (bytes_read == -1) {
-      perror("Ошибка чтения строки");
-      free(line_buf);
-      continue;
-    }
 
     line_buf[bytes_read] = '\0';
     printf("%s", line_buf);
