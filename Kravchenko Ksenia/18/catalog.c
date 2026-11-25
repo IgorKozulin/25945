@@ -1,4 +1,4 @@
-/* Лабораторная работа №18: аналог ls -ld — тип, права, число связей, владелец, группа, размер и дата для каждого аргумента. */
+/* Лабораторная работа №18: аналог ls -ld - тип, права, число связей, владелец, группа, размер и дата для каждого аргумента. */
 #define _POSIX_C_SOURCE 200809L
 
 #include <stdio.h>
@@ -14,8 +14,8 @@
 
 /* Заполняет строку вида "drwxr-xr-x":
    1 символ типа файла + 3 группы по 3 права. */
-static void make_permissions(mode_t mode, char p[11]){
-/* Первый символ — тип файла: d каталог, - обычный, l симлинк, ? прочее */
+static void build_permissions(mode_t mode, char p[11]){
+/* Первый символ - тип файла: d каталог, - обычный, l симлинк, ? прочее */
 if (S_ISDIR(mode))
 p[0] = 'd';
 else if (S_ISREG(mode))
@@ -25,7 +25,7 @@ p[0] = 'l';
 else
 p[0] = '?';
 
-/* Права владельца: бит установлен — буква, иначе прочерк */
+/* Права владельца: бит установлен - буква, иначе прочерк */
 p[1] = (mode & S_IRUSR) ? 'r' : '-';
 p[2] = (mode & S_IWUSR) ? 'w' : '-';
 p[3] = (mode & S_IXUSR) ? 'x' : '-';
@@ -48,7 +48,7 @@ int errors = 0;   // станет 1, если хотя бы один аргум�
 
 /* Без аргументов печатаем подсказку и выходим с ошибкой */
 if (argc < 2) {
-    fprintf(stderr, "Usage: %s <file> [file ...]\n", argv[0]);
+    fprintf(stderr, "Формат запуска: %s <файл> [файл ...]\n", argv[0]);
     return EXIT_FAILURE;
 }
 
@@ -73,7 +73,7 @@ for (int i = 1; i < argc; i++) {
         continue;
     }
 
-    make_permissions(st.st_mode, permissions);
+    build_permissions(st.st_mode, permissions);
 
     /* UID/GID -> имена; если записи нет, остаётся "?" */
     pw = getpwuid(st.st_uid);
@@ -84,7 +84,7 @@ for (int i = 1; i < argc; i++) {
     if (gr != NULL)
         group_name = gr->gr_name;
 
-    /* Дата: как в ls — для файлов старше ~6 месяцев вместо времени печатаем год */
+    /* Дата: как в ls - для файлов старше ~6 месяцев вместо времени печатаем год */
     tm_info = localtime(&st.st_mtime);
     if (tm_info != NULL) {
         now = time(NULL);
@@ -101,7 +101,7 @@ for (int i = 1; i < argc; i++) {
 
     /* basename может изменить строку, поэтому работаем с копией пути */
     if (strlen(argv[i]) >= sizeof(path_copy)) {
-        fprintf(stderr, "%s: path is too long\n", argv[i]);
+        fprintf(stderr, "%s: слишком длинный путь\n", argv[i]);
         errors = 1;
         continue;
     }
@@ -121,6 +121,6 @@ for (int i = 1; i < argc; i++) {
     printf("%-12s %s\n", date, name);
 }
 
-/* Ошибка хотя бы с одним файлом — ненулевой код возврата */
+/* Ошибка хотя бы с одним файлом - ненулевой код возврата */
 return errors ? EXIT_FAILURE : EXIT_SUCCESS;
 }
