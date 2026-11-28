@@ -1,14 +1,7 @@
-CC = gcc
-CFLAGS = -O2
-TARGET = setuid_test
-SRC = setuid_test.c
+all: novosibirsk_time
 
-all: $(TARGET)
-
-$(TARGET): $(SRC)
-	$(CC) $(CFLAGS) -o $(TARGET) $(SRC)
+novosibirsk_time: novosibirsk_time.c
+	gcc novosibirsk_time.c -o novosibirsk_time -Wall
 
 clean:
-	rm -f $(TARGET)
-
-.PHONY: all clean
+	rm -f novosibirsk_time
